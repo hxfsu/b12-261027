@@ -1,0 +1,1808 @@
+<!DOCTYPE html>
+<html lang="de" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vier Ecken: Live-Abstimmung – Deutschkurs B1.2</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- MQTT.js for Serverless Real-Time Sync on GitHub Pages -->
+    <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+        .bar-transition {
+            transition: width 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .corner-card {
+            transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .corner-card:hover {
+            transform: translateY(-2px);
+        }
+        .corner-card:active {
+            transform: scale(0.99);
+        }
+        .selected-card-ring {
+            box-shadow: 0 0 0 2px #2563eb, 0 10px 25px -5px rgba(37, 99, 235, 0.2);
+        }
+        .dark .selected-card-ring {
+            box-shadow: 0 0 0 2px #3b82f6, 0 10px 25px -5px rgba(59, 130, 246, 0.25);
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.5); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); }
+            100% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+        }
+        .timer-alert {
+            animation: pulse-ring 1.4s infinite;
+        }
+        @keyframes live-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .live-pulse {
+            animation: live-dot 2s infinite;
+        }
+        @keyframes shake-error {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-8px); }
+            40%, 80% { transform: translateX(8px); }
+        }
+        .shake-anim {
+            animation: shake-error 0.4s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 min-h-screen flex flex-col selection:bg-blue-600 selection:text-white">
+
+    <!-- ========================================== -->
+    <!-- TOP HEADER BAR & LIVE CONTROLS             -->
+    <!-- ========================================== -->
+    <header class="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                
+                <!-- Title, Level Badge & Live Room Status -->
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="px-3 py-1 rounded-lg bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 font-bold text-xs tracking-wider uppercase">
+                        B1.2
+                    </span>
+                    <h1 class="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+                        Vier Ecken – Live-Abstimmung
+                    </h1>
+
+                    <!-- Live Sync Indicator & Room Badge -->
+                    <button onclick="openRoomModal()" class="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:border-slate-400 transition" title="Raum-Code ändern oder Verbindungsstatus prüfen">
+                        <span id="sync-dot" class="w-2 h-2 rounded-full bg-slate-400 live-pulse"></span>
+                        <span class="font-mono font-bold" id="room-code-badge">b12</span>
+                        <span id="sync-status-text" class="hidden sm:inline opacity-75">Live</span>
+                    </button>
+                </div>
+
+                <!-- Right Controls: Name Input, Share Link, Teacher Mode Toggle, Timer, Theme -->
+                <div class="flex flex-wrap items-center gap-2">
+                    
+                    <!-- Optional Student Name Input for Teacher Statistics -->
+                    <div class="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1">
+                        <span class="text-xs text-slate-400 mr-1.5">👤</span>
+                        <input type="text" id="voter-name-input" oninput="saveVoterName(this.value)" placeholder="Dein Vorname (optional)" maxlength="22" class="bg-transparent text-xs font-medium text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none w-32 sm:w-36" title="Name wird bei deiner Stimme für die Kursleitung angezeigt">
+                    </div>
+
+                    <!-- Share Link & QR Code Button -->
+                    <button onclick="openShareModal()" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm flex items-center gap-1.5 transition" title="Link oder QR-Code für Teilnehmende teilen">
+                        <span>🔗</span> <span class="hidden sm:inline">Teilen / QR</span>
+                    </button>
+
+                    <!-- Teacher Mode Toggle (Password Protected) -->
+                    <button id="teacher-mode-btn" onclick="toggleTeacherMode()" class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs sm:text-sm flex items-center gap-1.5 border border-slate-200 dark:border-slate-700 transition" title="Kursleitungs-Steuerung freischalten (Passwortgeschützt)">
+                        <span id="teacher-mode-icon">🔒</span> <span id="teacher-mode-label">Kursleitung</span>
+                    </button>
+
+                    <!-- Compact Quick Timer -->
+                    <div id="timer-box" class="hidden xl:flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <span id="timer-icon" class="text-xs">⏱️</span>
+                        <span id="timer-display" class="font-mono font-bold text-sm text-slate-800 dark:text-slate-200 min-w-[46px] text-center">00:30</span>
+                        <button id="timer-toggle-btn" onclick="toggleTimer()" class="px-2 py-0.5 rounded bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-semibold text-xs transition">
+                            Start
+                        </button>
+                        <button onclick="setTimer(30)" id="preset-30" class="px-1.5 py-0.5 rounded text-xs font-medium transition">30s</button>
+                        <button onclick="setTimer(60)" id="preset-60" class="px-1.5 py-0.5 rounded text-xs font-medium transition">1m</button>
+                        <button onclick="resetTimer()" class="px-1 text-slate-500 hover:text-slate-900 dark:hover:text-white text-xs font-bold transition" title="Timer zurücksetzen">↺</button>
+                    </div>
+
+                    <!-- Theme & Fullscreen -->
+                    <div class="flex items-center gap-1">
+                        <button onclick="toggleTheme()" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition" title="Hell-/Dunkelmodus wechseln">
+                            <span id="theme-icon">🌙</span>
+                        </button>
+                        <button onclick="toggleFullScreen()" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition" title="Vollbildmodus">
+                            ⛶
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Teacher Controls Bar (Shown when Kursleitung is active) -->
+            <div id="teacher-toolbar" class="hidden mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <span class="px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-bold">
+                        Kursleitungs-Modus
+                    </span>
+                    <label class="flex items-center gap-2 cursor-pointer select-none text-slate-700 dark:text-slate-300 font-medium px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800">
+                        <input type="checkbox" id="sync-round-checkbox" checked class="rounded text-blue-600 focus:ring-blue-500">
+                        <span>Rundenwechsel für alle synchronisieren</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer select-none text-slate-700 dark:text-slate-300 font-medium px-2.5 py-1 rounded-md bg-slate-100 dark:bg-slate-800" title="Erlaubt beliebig viele Klicks pro Gerät (z. B. zum Testen)">
+                        <input type="checkbox" id="multi-vote-checkbox" onchange="toggleMultiVoteMode()" class="rounded text-blue-600 focus:ring-blue-500">
+                        <span>Demo-Modus (Mehrfach-Klick)</span>
+                    </label>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                    <button onclick="toggleStatsPanel()" id="stats-toggle-btn" class="px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 font-bold text-xs flex items-center gap-1.5 transition">
+                        <span>📊</span> <span id="stats-toggle-label">Statistik & Übersicht</span>
+                    </button>
+                    <button onclick="openCustomModal()" class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs flex items-center gap-1 transition">
+                        <span>+ Eigene Frage</span>
+                    </button>
+                    <button onclick="resetCurrentVotes()" class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold text-xs transition">
+                        Runde auf 0 setzen
+                    </button>
+                    <button onclick="resetAllRoundsVotes()" class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold text-xs transition">
+                        Alle leeren
+                    </button>
+                    <button onclick="openChangePasswordModal()" class="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold text-xs transition" title="Eigenes Kursleitungs-Passwort festlegen">
+                        Passwort ändern
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ========================================== -->
+    <!-- MAIN WORKSPACE                             -->
+    <!-- ========================================== -->
+    <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 flex flex-col justify-between gap-6">
+
+        <!-- 1. ROUND NAVIGATION & LIVE VOTE COUNTER BAR -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200 dark:border-slate-800">
+            <!-- Round Tabs -->
+            <div id="round-tabs-container" class="flex flex-wrap items-center gap-1.5">
+                <!-- Dynamically populated -->
+            </div>
+
+            <!-- Prev / Next Navigation -->
+            <div class="flex items-center gap-2 self-start sm:self-auto">
+                <button onclick="prevRound()" class="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold text-xs sm:text-sm transition">
+                    ← Zurück
+                </button>
+                <button onclick="nextRound()" class="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-slate-200 text-white dark:text-slate-900 font-semibold text-xs sm:text-sm transition">
+                    Weiter →
+                </button>
+            </div>
+        </div>
+
+        <!-- 2. ACTIVE QUESTION BANNER & CLEAR INSTRUCTION -->
+        <div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div>
+                <div id="round-subtitle" class="text-xs font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 mb-1.5">
+                    FRAGE 1 VON 4 • SELBSTEINSCHÄTZUNG
+                </div>
+                <h2 id="round-question" class="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
+                    Welche Fertigkeit fällt dir auf Deutsch am leichtesten?
+                </h2>
+                <p class="text-sm sm:text-base text-slate-500 dark:text-slate-400 mt-1.5">
+                    👉 Klicke unten direkt auf eine der vier Karten, um abzustimmen.
+                </p>
+            </div>
+
+            <!-- Live Participant Counter Pill -->
+            <div class="flex items-center gap-2 shrink-0 self-start md:self-end">
+                <div class="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center gap-2 shadow-sm">
+                    <span class="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400">
+                        Abgegebene Stimmen:
+                    </span>
+                    <span id="total-votes-badge" class="text-blue-600 dark:text-blue-400 text-base sm:text-lg font-extrabold font-mono">0</span>
+                </div>
+                <button id="my-vote-clear-btn" onclick="clearMyVote()" class="hidden px-3 py-2 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 text-xs font-semibold transition" title="Eigene Auswahl zurückziehen">
+                    Auswahl aufheben
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. INTERACTIVE 2x2 CORNERS GRID (CLEAN & MINIMALIST) -->
+        <div id="corners-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Dynamically rendered 4 corner cards -->
+        </div>
+
+        <!-- 3b. TEACHER LIVE STATISTICS & OVERALL SUMMARY PANEL -->
+        <section id="teacher-stats-panel" class="hidden rounded-2xl bg-white dark:bg-slate-900 border-2 border-blue-600/30 dark:border-blue-500/30 shadow-sm overflow-hidden">
+            <div class="px-5 py-3.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded bg-blue-600 text-white text-[11px] font-bold uppercase tracking-wider">Kursleitung</span>
+                    <h3 class="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                        📊 Live-Auswertung & Gesamtübersicht aller Runden
+                    </h3>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="copyStatsReport()" class="px-3 py-1 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition">
+                        📋 Ergebnis-Bericht kopieren
+                    </button>
+                    <button onclick="toggleStatsPanel()" class="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-white px-2 py-1">
+                        Schließen ✕
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-5 space-y-6">
+                <!-- Current Round Detailed Breakdown -->
+                <div>
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                            Aktuelle Runde im Detail (<span id="stats-current-round-title">Frage 1</span>)
+                        </div>
+                        <div id="stats-leading-badge" class="text-xs font-bold text-blue-600 dark:text-blue-400">
+                            Noch keine Stimmen abgegeben
+                        </div>
+                    </div>
+                    <div id="stats-current-round-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <!-- Dynamically populated -->
+                    </div>
+                </div>
+
+                <!-- All Rounds Summary Table -->
+                <div class="pt-4 border-t border-slate-200 dark:border-slate-800">
+                    <div class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">
+                        Gesamtübersicht aller Fragen (Stimmen, Spitzenreiter & Teilnehmende)
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-xs sm:text-sm">
+                            <thead>
+                                <tr class="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold">
+                                    <th class="py-2 pr-3">Runde / Frage</th>
+                                    <th class="py-2 px-3 text-center">Stimmen</th>
+                                    <th class="py-2 px-3">Meistgewählt (Spitzenreiter)</th>
+                                    <th class="py-2 pl-3">Verteilung (A / B / C / D)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="stats-all-rounds-tbody" class="divide-y divide-slate-200 dark:divide-slate-800">
+                                <!-- Dynamically populated -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. B1.2 REDEMITTEL & TEACHER FOLLOW-UP IMPULSES -->
+        <div class="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <!-- Toggle Header -->
+            <div class="px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between cursor-pointer" onclick="toggleImpulseDrawer()">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs sm:text-sm font-bold text-slate-700 dark:text-slate-200">
+                        💬 Redemittel zum Begründen & Gesprächsfragen (B1.2)
+                    </span>
+                </div>
+                <button id="drawer-toggle-label" class="text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white">
+                    Ausblenden ▲
+                </button>
+            </div>
+
+            <!-- Drawer Content -->
+            <div id="impulse-drawer-content" class="p-5 grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                <!-- Redemittel for Students (7 cols) -->
+                <div class="lg:col-span-7 space-y-2.5">
+                    <div class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Satz-Starter für deine Begründung im Kurs:
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                        <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                            „Ich habe <span id="my-selected-label" class="font-bold text-blue-600 dark:text-blue-400">diese Option</span> gewählt, <span class="underline font-bold">weil</span> …“
+                        </div>
+                        <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                            „Mir geht es ähnlich wie [Name], <span class="underline font-bold">deshalb</span> …“
+                        </div>
+                        <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                            „Bei mir kommt es darauf an: <span class="underline font-bold">Einerseits</span> …, <span class="underline font-bold">andererseits</span> …“
+                        </div>
+                        <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                            „<span class="underline font-bold">Obwohl</span> mir … leichtfällt, möchte ich noch …“
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Follow-up Questions for Teacher/Plenum (5 cols) -->
+                <div class="lg:col-span-5 flex flex-col justify-between p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                    <div>
+                        <div class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                            Gesprächsfragen (Runde <span id="impulse-round-num">1</span>):
+                        </div>
+                        <ul id="round-followups" class="space-y-2 text-sm font-medium text-slate-800 dark:text-slate-200">
+                            <!-- Dynamically injected -->
+                        </ul>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ========================================== -->
+    <!-- MODAL 1: SHARE LINK & QR CODE FOR STUDENTS -->
+    <!-- ========================================== -->
+    <div id="share-modal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-xl space-y-5 text-center">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 class="text-lg font-bold text-slate-900 dark:text-white">
+                    Link & QR-Code für Teilnehmende
+                </h3>
+                <button onclick="closeShareModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white font-bold">
+                    ✕
+                </button>
+            </div>
+
+            <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                Teile diesen Link im Zoom-Chat oder lasse den QR-Code scannen (Raum: <strong id="share-room-label" class="font-mono text-blue-600 dark:text-blue-400">b12</strong>).
+            </p>
+
+            <!-- QR Code Container -->
+            <div class="flex justify-center">
+                <div class="p-3 bg-white rounded-xl border border-slate-200 inline-block">
+                    <img id="qr-code-img" src="" alt="QR-Code für Teilnehmende" class="w-44 h-44 mx-auto" onerror="this.style.display='none'">
+                </div>
+            </div>
+
+            <!-- Copyable URL Box -->
+            <div class="flex items-center gap-2">
+                <input type="text" id="share-url-input" readonly class="flex-1 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs font-mono text-slate-800 dark:text-slate-200 focus:outline-none">
+                <button onclick="copyShareUrl()" id="copy-url-btn" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs whitespace-nowrap transition">
+                    Kopieren
+                </button>
+            </div>
+
+            <div class="pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+                <button onclick="closeShareModal()" class="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs">
+                    Schließen
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODAL 2: CHANGE ROOM CODE                  -->
+    <!-- ========================================== -->
+    <div id="room-modal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 class="text-lg font-bold text-slate-900 dark:text-white">
+                    Live-Raum ändern
+                </h3>
+                <button onclick="closeRoomModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white font-bold">
+                    ✕
+                </button>
+            </div>
+
+            <div class="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+                <p>
+                    Alle Teilnehmenden mit demselben Raum-Code stimmen gemeinsam in Echtzeit ab.
+                </p>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
+                        Raum-Code:
+                    </label>
+                    <input type="text" id="room-code-input" placeholder="z. B. b12-montag" class="w-full px-3.5 py-2 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 font-mono font-bold text-base focus:outline-none focus:ring-2 focus:ring-blue-600">
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button onclick="closeRoomModal()" class="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs">
+                    Abbrechen
+                </button>
+                <button onclick="applyNewRoomCode()" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs">
+                    Übernehmen
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODAL 3: ADD CUSTOM QUESTION LIVE          -->
+    <!-- ========================================== -->
+    <div id="custom-modal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-xl space-y-4 max-h-[92vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 class="text-lg font-bold text-slate-900 dark:text-white">
+                    Eigene Frage hinzufügen
+                </h3>
+                <button onclick="closeCustomModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white font-bold">
+                    ✕
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
+                        Frage an den Kurs *
+                    </label>
+                    <input type="text" id="custom-q-title" placeholder="z. B. Wie verbringst du am liebsten dein Wochenende?" class="w-full px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600">
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <!-- Option A -->
+                    <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
+                        <div class="font-bold text-xs text-slate-500">Option A</div>
+                        <input type="text" id="custom-opt1-title" placeholder="Titel (z. B. Natur & Sport)" class="w-full px-3 py-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-sm font-semibold">
+                        <input type="text" id="custom-opt1-desc" placeholder="Kurze Erklärung (optional)" class="w-full px-3 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs">
+                    </div>
+
+                    <!-- Option B -->
+                    <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
+                        <div class="font-bold text-xs text-slate-500">Option B</div>
+                        <input type="text" id="custom-opt2-title" placeholder="Titel (z. B. Freunde & Café)" class="w-full px-3 py-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-sm font-semibold">
+                        <input type="text" id="custom-opt2-desc" placeholder="Kurze Erklärung (optional)" class="w-full px-3 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs">
+                    </div>
+
+                    <!-- Option C -->
+                    <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
+                        <div class="font-bold text-xs text-slate-500">Option C</div>
+                        <input type="text" id="custom-opt3-title" placeholder="Titel (z. B. Kultur & Ausflug)" class="w-full px-3 py-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-sm font-semibold">
+                        <input type="text" id="custom-opt3-desc" placeholder="Kurze Erklärung (optional)" class="w-full px-3 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs">
+                    </div>
+
+                    <!-- Option D -->
+                    <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
+                        <div class="font-bold text-xs text-slate-500">Option D</div>
+                        <input type="text" id="custom-opt4-title" placeholder="Titel (z. B. Sofa & Serien)" class="w-full px-3 py-1.5 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-sm font-semibold">
+                        <input type="text" id="custom-opt4-desc" placeholder="Kurze Erklärung (optional)" class="w-full px-3 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
+                        Gesprächsfrage für das Plenum (optional)
+                    </label>
+                    <input type="text" id="custom-q-followup" placeholder="z. B. Was hast du letztes Wochenende gemacht?" class="w-full px-3.5 py-2 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs">
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button onclick="closeCustomModal()" class="px-4 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs">
+                    Abbrechen
+                </button>
+                <button onclick="saveCustomRound()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs">
+                    Frage starten
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODAL 4: TEACHER PASSWORD AUTHENTICATION   -->
+    <!-- ========================================== -->
+    <div id="password-modal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div id="password-modal-card" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-xl space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 class="text-base font-bold text-slate-900 dark:text-white">
+                    Kursleitung freischalten
+                </h3>
+                <button onclick="closePasswordModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white font-bold">
+                    ✕
+                </button>
+            </div>
+
+            <form onsubmit="submitTeacherPassword(event)" class="space-y-4">
+                <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                    Bitte gib das Passwort ein, um Runden für alle zu synchronisieren oder Stimmen zurückzusetzen.
+                </p>
+
+                <div>
+                    <div class="relative">
+                        <input type="password" id="teacher-password-input" placeholder="Passwort…" autocomplete="off" class="w-full px-3.5 py-2 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 pr-10">
+                        <button type="button" onclick="togglePasswordVisibility('teacher-password-input')" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs" title="Anzeigen">
+                            👁️
+                        </button>
+                    </div>
+                    <p id="password-error-msg" class="hidden mt-1.5 text-xs font-semibold text-red-600 dark:text-red-400">
+                        Falsches Passwort.
+                    </p>
+                </div>
+
+                <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <button type="button" onclick="closePasswordModal()" class="px-3.5 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs">
+                        Abbrechen
+                    </button>
+                    <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs">
+                        Freischalten
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODAL 5: CHANGE TEACHER PASSWORD           -->
+    <!-- ========================================== -->
+    <div id="change-password-modal" class="fixed inset-0 z-50 hidden bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-xl space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 class="text-base font-bold text-slate-900 dark:text-white">
+                    Passwort ändern
+                </h3>
+                <button onclick="closeChangePasswordModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white font-bold">
+                    ✕
+                </button>
+            </div>
+
+            <form onsubmit="saveNewTeacherPassword(event)" class="space-y-4">
+                <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                    Standard-Passwort ist <code class="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono">b12</code>.
+                </p>
+
+                <div>
+                    <input type="text" id="new-teacher-password-input" placeholder="Neues Passwort" class="w-full px-3.5 py-2 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 font-mono font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-blue-600">
+                </div>
+
+                <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <button type="button" onclick="resetTeacherPasswordToDefault()" class="text-xs text-slate-500 hover:underline">
+                        Standard („b12“)
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <button type="button" onclick="closeChangePasswordModal()" class="px-3.5 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs">
+                            Abbrechen
+                        </button>
+                        <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs">
+                            Speichern
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-5 right-5 z-50 transform translate-y-20 opacity-0 pointer-events-none transition-all duration-300 px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-semibold text-xs shadow-lg flex items-center gap-2">
+        <span id="toast-text">Gespeichert</span>
+    </div>
+
+    <script>
+        // =====================================================
+        // 1. VOTER IDENTITY & ROOM CONFIGURATION
+        // =====================================================
+        function getOrCreateVoterId() {
+            const key = 'daf_b12_voter_id';
+            let id = null;
+            try {
+                id = localStorage.getItem(key);
+                if (!id) {
+                    id = 'tn_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now().toString(36).slice(-4);
+                    localStorage.setItem(key, id);
+                }
+            } catch (e) {
+                id = 'tn_' + Math.random().toString(36).substring(2, 10);
+            }
+            return id;
+        }
+
+        const myVoterId = getOrCreateVoterId();
+        let myVoterName = '';
+        try {
+            myVoterName = localStorage.getItem('daf_b12_voter_name') || '';
+        } catch (e) {}
+
+        const urlParams = new URLSearchParams(window.location.search);
+        let currentRoomCode = (urlParams.get('room') || 'b12').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'b12';
+
+        const DEFAULT_TEACHER_PASSWORD = 'b12';
+        const TEACHER_PW_STORAGE_KEY = 'daf_b12_custom_teacher_pw';
+        const TEACHER_SESSION_UNLOCK_KEY = 'daf_b12_teacher_unlocked';
+
+        let isTeacherMode = false;
+        let isTeacherStatsOpen = true;
+        let isMultiVoteDemo = false;
+        let impulseDrawerOpen = true;
+
+        function saveVoterName(val) {
+            myVoterName = (val || '').trim();
+            try {
+                localStorage.setItem('daf_b12_voter_name', myVoterName);
+            } catch (e) {}
+            appState.voterNames[myVoterId] = myVoterName;
+            renderAll();
+            publishAction({
+                type: 'SET_NAME',
+                voterId: myVoterId,
+                voterName: myVoterName
+            }, true);
+        }
+
+        // =====================================================
+        // 2. B1.2 ROUNDS DATA & APPLICATION STATE
+        // =====================================================
+        const defaultRounds = [
+            {
+                id: 'r1',
+                shortTab: '1. Fertigkeiten',
+                category: 'SELBSTEINSCHÄTZUNG',
+                question: 'Welche Fertigkeit fällt dir auf Deutsch am leichtesten?',
+                followups: [
+                    '• In welchen Situationen im Alltag benutzt du diese Fertigkeit am häufigsten?',
+                    '• Welche der vier Optionen möchtest du in diesem B1.2-Kurs besonders trainieren?'
+                ],
+                options: [
+                    { label: 'A', emoji: '🗣️', title: 'Sprechen', desc: 'Ich rede im Alltag einfach gerne drauflos.' },
+                    { label: 'B', emoji: '🎧', title: 'Hören', desc: 'Ich verstehe Podcasts, Videos oder Gespräche gut.' },
+                    { label: 'C', emoji: '📖', title: 'Lesen', desc: 'Texte, Nachrichten und Artikel fallen mir am leichtesten.' },
+                    { label: 'D', emoji: '✍️', title: 'Schreiben & Grammatik', desc: 'Ich mag klare Strukturen, Regeln und Zeit zum Überlegen.' }
+                ]
+            },
+            {
+                id: 'r2',
+                shortTab: '2. Lernzeit',
+                category: 'LERNGEWOHNHEITEN',
+                question: 'Zu welcher Tageszeit kannst du dich am besten konzentrieren?',
+                followups: [
+                    '• Was hilft dir beim Lernen (z. B. Ruhe, Musik, Kaffee, feste Termine)?',
+                    '• Hast du einen Tipp, wie man im Alltag regelmäßig Deutsch übt?'
+                ],
+                options: [
+                    { label: 'A', emoji: '🌅', title: 'Frühmorgens', desc: 'Mit frischem Kopf direkt nach dem Aufstehen.' },
+                    { label: 'B', emoji: '☀️', title: 'Tagsüber', desc: 'Am besten vor- oder nachmittags mit einer Tasse Kaffee.' },
+                    { label: 'C', emoji: '🌙', title: 'Abends', desc: 'Nach dem Feierabend, wenn der Tag ruhig wird.' },
+                    { label: 'D', emoji: '🚆', title: 'Unterwegs & flexibel', desc: 'Im Zug, beim Spazierengehen mit Podcasts oder Apps.' }
+                ]
+            },
+            {
+                id: 'r3',
+                shortTab: '3. Kursziel',
+                category: 'ZIELE FÜR B1.2',
+                question: 'Was ist dein wichtigstes persönliches Ziel für diesen B1.2-Kurs?',
+                followups: [
+                    '• Woran wirst du am Ende des Kurses merken, dass du dein Ziel erreicht hast?',
+                    '• In welcher Situation möchtest du dich auf Deutsch noch sicherer fühlen?'
+                ],
+                options: [
+                    { label: 'A', emoji: '💬', title: 'Flüssiger sprechen', desc: 'Spontaner reagieren und weniger nach Wörtern suchen.' },
+                    { label: 'B', emoji: '🧩', title: 'Sichere Grammatik', desc: 'Weniger Fehler bei Nebensätzen und längeren Sätzen machen.' },
+                    { label: 'C', emoji: '🎓', title: 'Prüfung & Beruf', desc: 'Ich brauche gutes Deutsch für ein Zertifikat oder die Arbeit.' },
+                    { label: 'D', emoji: '📚', title: 'Wortschatz erweitern', desc: 'Meine Gedanken und Meinungen präziser ausdrücken.' }
+                ]
+            },
+            {
+                id: 'r4',
+                shortTab: '4. Fehlerkorrektur',
+                category: 'UNTERRICHTSWÜNSCHE',
+                question: 'Wie möchtest du beim Sprechen im Kurs korrigiert werden?',
+                followups: [
+                    '• Warum hilft dir diese Art von Feedback beim Lernen am meisten?',
+                    '• Gibt es bestimmte Fehler (z. B. Aussprache, Satzbau), auf die wir besonders achten sollen?'
+                ],
+                options: [
+                    { label: 'A', emoji: '⚡', title: 'Sofort beim Sprechen', desc: 'Bitte direkt kurz unterbrechen und den Fehler verbessern.' },
+                    { label: 'B', emoji: '✋', title: 'Am Ende meines Satzes', desc: 'Erst ausreden lassen, danach direkt kurzes Feedback geben.' },
+                    { label: 'C', emoji: '💻', title: 'Im Zoom-Chat sammeln', desc: 'Schreib Korrekturen lieber begleitend für alle in den Chat.' },
+                    { label: 'D', emoji: '🌊', title: 'Nur bei großen Fehlern', desc: 'Solange man mich gut versteht, ist mir Redefluss wichtiger.' }
+                ]
+            }
+        ];
+
+        const appState = {
+            activeRoundIndex: 0,
+            customRounds: [],
+            votesByRound: { 0: {}, 1: {}, 2: {}, 3: {} },
+            voterNames: {}
+        };
+
+        function getAllRounds() {
+            return [...defaultRounds, ...appState.customRounds];
+        }
+
+        // =====================================================
+        // 3. REAL-TIME SYNC (MQTT OVER WSS + LOCALSTORAGE)
+        // =====================================================
+        let mqttClient = null;
+        let bcChannel = null;
+
+        function getRoomTopics() {
+            const base = `daf_b12_vierecken_2026_${currentRoomCode}`;
+            return {
+                state: `${base}/state`,
+                action: `${base}/action`
+            };
+        }
+
+        function updateSyncBadge(status, text) {
+            const dot = document.getElementById('sync-dot');
+            const label = document.getElementById('sync-status-text');
+            const badge = document.getElementById('room-code-badge');
+            if (badge) badge.textContent = currentRoomCode;
+
+            if (status === 'live') {
+                if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-500 live-pulse';
+                if (label) label.textContent = text || 'Live';
+            } else if (status === 'connecting') {
+                if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-500 live-pulse';
+                if (label) label.textContent = text || 'Verbinde…';
+            } else {
+                if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-400';
+                if (label) label.textContent = text || 'Lokal';
+            }
+        }
+
+        function saveStateToLocalCache() {
+            try {
+                localStorage.setItem(`daf_b12_state_${currentRoomCode}`, JSON.stringify(appState));
+            } catch (e) {}
+        }
+
+        function loadStateFromLocalCache() {
+            try {
+                const raw = localStorage.getItem(`daf_b12_state_${currentRoomCode}`);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    mergeIncomingState(parsed);
+                }
+            } catch (e) {}
+        }
+
+        function mergeIncomingState(remoteState) {
+            if (!remoteState || typeof remoteState !== 'object') return;
+
+            if (Array.isArray(remoteState.customRounds)) {
+                const existingIds = new Set(appState.customRounds.map(r => r.id));
+                remoteState.customRounds.forEach(r => {
+                    if (r && r.id && !existingIds.has(r.id)) {
+                        appState.customRounds.push(r);
+                    }
+                });
+            }
+
+            if (remoteState.votesByRound && typeof remoteState.votesByRound === 'object') {
+                Object.keys(remoteState.votesByRound).forEach(rIdx => {
+                    if (!appState.votesByRound[rIdx]) appState.votesByRound[rIdx] = {};
+                    Object.assign(appState.votesByRound[rIdx], remoteState.votesByRound[rIdx]);
+                });
+            }
+
+            if (remoteState.voterNames && typeof remoteState.voterNames === 'object') {
+                if (!appState.voterNames) appState.voterNames = {};
+                Object.assign(appState.voterNames, remoteState.voterNames);
+            }
+
+            if (typeof remoteState.activeRoundIndex === 'number' && !isTeacherMode) {
+                const maxIdx = getAllRounds().length - 1;
+                appState.activeRoundIndex = Math.max(0, Math.min(maxIdx, remoteState.activeRoundIndex));
+            }
+
+            renderAll();
+        }
+
+        function handleIncomingAction(action) {
+            if (!action || !action.type) return;
+
+            if (action.type === 'VOTE') {
+                const { roundIdx, voterId, optionIdx, voterName } = action;
+                if (!appState.votesByRound[roundIdx]) appState.votesByRound[roundIdx] = {};
+                if (voterName !== undefined) {
+                    if (!appState.voterNames) appState.voterNames = {};
+                    appState.voterNames[voterId] = voterName;
+                }
+                if (optionIdx === null || optionIdx === undefined) {
+                    delete appState.votesByRound[roundIdx][voterId];
+                } else {
+                    appState.votesByRound[roundIdx][voterId] = optionIdx;
+                }
+                saveStateToLocalCache();
+                renderAll();
+            } else if (action.type === 'SET_NAME') {
+                if (action.voterId) {
+                    if (!appState.voterNames) appState.voterNames = {};
+                    appState.voterNames[action.voterId] = action.voterName || '';
+                    saveStateToLocalCache();
+                    renderAll();
+                }
+            } else if (action.type === 'CHANGE_ROUND') {
+                if (typeof action.roundIdx === 'number') {
+                    appState.activeRoundIndex = action.roundIdx;
+                    saveStateToLocalCache();
+                    renderAll();
+                }
+            } else if (action.type === 'RESET_ROUND') {
+                const rIdx = action.roundIdx;
+                appState.votesByRound[rIdx] = {};
+                saveStateToLocalCache();
+                renderAll();
+            } else if (action.type === 'RESET_ALL') {
+                const rounds = getAllRounds();
+                appState.votesByRound = {};
+                rounds.forEach((_, idx) => { appState.votesByRound[idx] = {}; });
+                saveStateToLocalCache();
+                renderAll();
+            } else if (action.type === 'ADD_CUSTOM_ROUND' && action.round) {
+                const exists = appState.customRounds.some(r => r.id === action.round.id);
+                if (!exists) {
+                    appState.customRounds.push(action.round);
+                    const newIdx = getAllRounds().length - 1;
+                    if (!appState.votesByRound[newIdx]) appState.votesByRound[newIdx] = {};
+                    appState.activeRoundIndex = newIdx;
+                    saveStateToLocalCache();
+                    renderAll();
+                }
+            }
+        }
+
+        function publishAction(actionPayload, updateRetainedState = true) {
+            saveStateToLocalCache();
+
+            if (bcChannel) {
+                try { bcChannel.postMessage(actionPayload); } catch (e) {}
+            }
+
+            if (mqttClient && mqttClient.connected) {
+                const topics = getRoomTopics();
+                try {
+                    mqttClient.publish(topics.action, JSON.stringify(actionPayload), { qos: 0 });
+                    if (updateRetainedState) {
+                        mqttClient.publish(topics.state, JSON.stringify(appState), { qos: 0, retain: true });
+                    }
+                } catch (e) {}
+            }
+        }
+
+        function initRealTimeSync() {
+            loadStateFromLocalCache();
+            updateSyncBadge('connecting', 'Verbinde…');
+
+            if (bcChannel) {
+                try { bcChannel.close(); } catch (e) {}
+            }
+            if ('BroadcastChannel' in window) {
+                bcChannel = new BroadcastChannel(`daf_bc_${currentRoomCode}`);
+                bcChannel.onmessage = (ev) => {
+                    if (ev.data) handleIncomingAction(ev.data);
+                };
+            }
+
+            if (mqttClient) {
+                try { mqttClient.end(true); } catch (e) {}
+                mqttClient = null;
+            }
+
+            if (typeof mqtt === 'undefined') {
+                updateSyncBadge('offline', 'Lokaler Modus');
+                return;
+            }
+
+            const topics = getRoomTopics();
+            try {
+                mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+                    clientId: 'daf_b12_' + myVoterId + '_' + Math.random().toString(16).slice(2, 6),
+                    clean: true,
+                    connectTimeout: 5000,
+                    reconnectPeriod: 3000
+                });
+
+                mqttClient.on('connect', () => {
+                    updateSyncBadge('live', 'Live verbunden');
+                    mqttClient.subscribe([topics.state, topics.action], { qos: 0 });
+                });
+
+                mqttClient.on('message', (topic, messageBuffer) => {
+                    try {
+                        const data = JSON.parse(messageBuffer.toString());
+                        if (topic === topics.state) {
+                            mergeIncomingState(data);
+                        } else if (topic === topics.action) {
+                            handleIncomingAction(data);
+                        }
+                    } catch (err) {}
+                });
+
+                mqttClient.on('error', () => {
+                    updateSyncBadge('offline', 'Lokaler Modus');
+                });
+
+                mqttClient.on('offline', () => {
+                    updateSyncBadge('connecting', 'Verbinde…');
+                });
+            } catch (e) {
+                updateSyncBadge('offline', 'Lokaler Modus');
+            }
+        }
+
+        // =====================================================
+        // 4. VOTING LOGIC (1 VOTE PER STUDENT OR MULTI-DEMO)
+        // =====================================================
+        function castVote(optionIdx) {
+            const rIdx = appState.activeRoundIndex;
+            if (!appState.votesByRound[rIdx]) {
+                appState.votesByRound[rIdx] = {};
+            }
+
+            let voterKey = myVoterId;
+            let newChoice = optionIdx;
+
+            if (isMultiVoteDemo && isTeacherMode) {
+                voterKey = 'demo_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+            } else {
+                const currentChoice = appState.votesByRound[rIdx][myVoterId];
+                if (currentChoice === optionIdx) {
+                    newChoice = null; // Toggle off if clicking same card again
+                }
+            }
+
+            if (newChoice === null) {
+                delete appState.votesByRound[rIdx][voterKey];
+            } else {
+                appState.votesByRound[rIdx][voterKey] = newChoice;
+            }
+
+            if (myVoterName && voterKey === myVoterId) {
+                appState.voterNames[myVoterId] = myVoterName;
+            }
+
+            renderAll();
+            publishAction({
+                type: 'VOTE',
+                roundIdx: rIdx,
+                voterId: voterKey,
+                optionIdx: newChoice,
+                voterName: voterKey === myVoterId ? myVoterName : undefined
+            }, true);
+        }
+
+        function clearMyVote() {
+            const rIdx = appState.activeRoundIndex;
+            if (appState.votesByRound[rIdx] && appState.votesByRound[rIdx][myVoterId] !== undefined) {
+                delete appState.votesByRound[rIdx][myVoterId];
+                renderAll();
+                publishAction({
+                    type: 'VOTE',
+                    roundIdx: rIdx,
+                    voterId: myVoterId,
+                    optionIdx: null
+                }, true);
+            }
+        }
+
+        // =====================================================
+        // 5. UI RENDERING (TABS, 2x2 CORNERS, BARS, IMPULSES)
+        // =====================================================
+        function renderAll() {
+            const rounds = getAllRounds();
+            if (appState.activeRoundIndex >= rounds.length) {
+                appState.activeRoundIndex = 0;
+            }
+            const rIdx = appState.activeRoundIndex;
+            const currentRound = rounds[rIdx];
+            const roundVotesMap = appState.votesByRound[rIdx] || {};
+
+            // 1. Render Round Navigation Tabs (Clean neutral/blue tabs)
+            const tabsContainer = document.getElementById('round-tabs-container');
+            tabsContainer.innerHTML = '';
+            rounds.forEach((r, idx) => {
+                const btn = document.createElement('button');
+                btn.onclick = () => selectRound(idx);
+                if (idx === rIdx) {
+                    btn.className = 'px-3.5 py-1.5 rounded-lg font-bold text-xs sm:text-sm transition bg-blue-600 text-white shadow-xs';
+                } else {
+                    btn.className = 'px-3.5 py-1.5 rounded-lg font-medium text-xs sm:text-sm transition bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-600';
+                }
+                btn.textContent = r.shortTab;
+                tabsContainer.appendChild(btn);
+            });
+
+            // 2. Render Question Header
+            document.getElementById('round-subtitle').textContent = `FRAGE ${rIdx + 1} VON ${rounds.length} • ${currentRound.category}`;
+            document.getElementById('round-question').textContent = currentRound.question;
+
+            // 3. Calculate Votes per Corner
+            const counts = [0, 0, 0, 0];
+            Object.values(roundVotesMap).forEach(choiceIdx => {
+                if (typeof choiceIdx === 'number' && counts[choiceIdx] !== undefined) {
+                    counts[choiceIdx]++;
+                }
+            });
+            const totalVotes = counts.reduce((acc, v) => acc + v, 0);
+            document.getElementById('total-votes-badge').textContent = totalVotes;
+
+            const myChoice = roundVotesMap[myVoterId];
+            const clearBtn = document.getElementById('my-vote-clear-btn');
+            const selectedLabel = document.getElementById('my-selected-label');
+
+            if (myChoice !== undefined && currentRound.options[myChoice]) {
+                clearBtn.classList.remove('hidden');
+                selectedLabel.textContent = `„${currentRound.options[myChoice].title}“`;
+            } else {
+                clearBtn.classList.add('hidden');
+                selectedLabel.textContent = 'diese Option';
+            }
+
+            // 4. Render 2x2 Corners Grid (Unified, Minimalist Monochrome + Single Blue Accent)
+            const grid = document.getElementById('corners-grid');
+            grid.innerHTML = '';
+
+            const defaultLabels = ['A', 'B', 'C', 'D'];
+
+            currentRound.options.forEach((opt, idx) => {
+                const count = counts[idx];
+                const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+                const isSelected = myChoice === idx;
+                const letter = opt.label || defaultLabels[idx];
+
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.onclick = () => castVote(idx);
+
+                const baseCardClasses = 'corner-card w-full text-left p-5 sm:p-6 rounded-2xl border flex flex-col justify-between gap-5 cursor-pointer focus:outline-none';
+                const unselectedClasses = 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-600 shadow-xs';
+                const selectedClasses = 'bg-blue-50/50 dark:bg-blue-950/30 border-blue-600 dark:border-blue-500 selected-card-ring';
+
+                card.className = `${baseCardClasses} ${isSelected ? selectedClasses : unselectedClasses}`;
+
+                card.innerHTML = `
+                    <div class="flex items-start justify-between gap-4 w-full">
+                        <div class="flex items-start gap-3.5">
+                            <!-- Clean Letter Badge (A, B, C, D) -->
+                            <div class="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-base shrink-0 transition-colors ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}">
+                                ${letter}
+                            </div>
+                            <div>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <h3 class="text-lg sm:text-xl font-bold text-slate-900 dark:text-white leading-snug">
+                                        ${opt.title}
+                                    </h3>
+                                    ${isSelected ? `<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-blue-600 text-white">✓ Gewählt</span>` : ''}
+                                </div>
+                                <p class="text-sm text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                                    ${opt.desc}
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Clean Live Vote Counter -->
+                        <div class="flex flex-col items-end shrink-0 pl-2">
+                            <div class="text-2xl sm:text-3xl font-extrabold font-mono ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-slate-900 dark:text-white'} leading-none">
+                                ${count}
+                            </div>
+                            <div class="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1">
+                                ${pct}%
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Subtle Progress Bar -->
+                    <div class="w-full">
+                        <div class="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                            <div class="h-full rounded-full ${isSelected ? 'bg-blue-600 dark:bg-blue-500' : 'bg-slate-400 dark:bg-slate-600'} bar-transition" style="width: ${pct}%"></div>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+
+            // 5. Render Follow-up Questions for Current Round
+            document.getElementById('impulse-round-num').textContent = rIdx + 1;
+            const followupsList = document.getElementById('round-followups');
+            followupsList.innerHTML = '';
+            currentRound.followups.forEach(item => {
+                const li = document.createElement('li');
+                li.textContent = item;
+                followupsList.appendChild(li);
+            });
+
+            // 6. Render Teacher Live Statistics if in Teacher Mode
+            renderTeacherStats();
+        }
+
+        function getVoterDisplayName(vId, indexFallback) {
+            const custom = appState.voterNames && appState.voterNames[vId];
+            if (custom && custom.trim().length > 0) return custom.trim();
+            if (vId === myVoterId) return myVoterName || 'Ich';
+            if (vId.startsWith('demo_')) return `Demo #${indexFallback}`;
+            return `TN-${vId.slice(-3).toUpperCase()}`;
+        }
+
+        function renderTeacherStats() {
+            const panel = document.getElementById('teacher-stats-panel');
+            if (!panel) return;
+
+            if (!isTeacherMode || !isTeacherStatsOpen) {
+                panel.classList.add('hidden');
+                return;
+            }
+            panel.classList.remove('hidden');
+
+            const rounds = getAllRounds();
+            const rIdx = appState.activeRoundIndex;
+            const currentRound = rounds[rIdx];
+            const roundVotesMap = appState.votesByRound[rIdx] || {};
+            const defaultLabels = ['A', 'B', 'C', 'D'];
+
+            document.getElementById('stats-current-round-title').textContent = `${currentRound.shortTab}`;
+
+            // Group voters by option for the active round
+            const votersPerOption = [[], [], [], []];
+            let voterCounter = 1;
+            Object.entries(roundVotesMap).forEach(([vId, choiceIdx]) => {
+                if (typeof choiceIdx === 'number' && votersPerOption[choiceIdx]) {
+                    votersPerOption[choiceIdx].push(getVoterDisplayName(vId, voterCounter++));
+                }
+            });
+
+            const counts = votersPerOption.map(list => list.length);
+            const totalVotes = counts.reduce((a, b) => a + b, 0);
+            const maxCount = Math.max(...counts);
+
+            // Leading option badge
+            const leadingBadge = document.getElementById('stats-leading-badge');
+            if (totalVotes === 0) {
+                leadingBadge.textContent = 'Noch keine Stimmen in dieser Runde';
+            } else {
+                const leaders = [];
+                counts.forEach((c, idx) => {
+                    if (c === maxCount && c > 0) {
+                        const letter = currentRound.options[idx]?.label || defaultLabels[idx];
+                        leaders.push(`${letter}: ${currentRound.options[idx]?.title}`);
+                    }
+                });
+                const maxPct = Math.round((maxCount / totalVotes) * 100);
+                leadingBadge.textContent = `🏆 Meistgewählt: ${leaders.join(' & ')} (${maxCount} St. / ${maxPct}%)`;
+            }
+
+            // Render 4 mini detail cards for active round (including voter names)
+            const detailContainer = document.getElementById('stats-current-round-cards');
+            detailContainer.innerHTML = '';
+            currentRound.options.forEach((opt, idx) => {
+                const count = counts[idx];
+                const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+                const isLeader = totalVotes > 0 && count === maxCount && count > 0;
+                const letter = opt.label || defaultLabels[idx];
+                const voterNamesList = votersPerOption[idx];
+
+                const box = document.createElement('div');
+                box.className = `p-3.5 rounded-xl border flex flex-col justify-between gap-2 ${
+                    isLeader
+                        ? 'bg-blue-50/60 dark:bg-blue-950/30 border-blue-500/60'
+                        : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'
+                }`;
+
+                const voterPillsHtml = voterNamesList.length > 0
+                    ? voterNamesList.map(name => `<span class="px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-slate-700 dark:text-slate-300">${name}</span>`).join('')
+                    : `<span class="text-[11px] text-slate-400 italic">Keine Stimmen</span>`;
+
+                box.innerHTML = `
+                    <div>
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="font-bold text-xs text-slate-900 dark:text-white">
+                                ${letter} • ${opt.title}
+                            </span>
+                            <span class="font-mono font-extrabold text-xs ${isLeader ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400'}">
+                                ${count} (${pct}%)
+                            </span>
+                        </div>
+                        <div class="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden mt-1.5">
+                            <div class="h-full rounded-full ${isLeader ? 'bg-blue-600' : 'bg-slate-400 dark:bg-slate-600'}" style="width: ${pct}%"></div>
+                        </div>
+                    </div>
+                    <div class="pt-2 border-t border-slate-200/70 dark:border-slate-800 flex flex-wrap gap-1">
+                        ${voterPillsHtml}
+                    </div>
+                `;
+                detailContainer.appendChild(box);
+            });
+
+            // Render All Rounds Overview Table
+            const tbody = document.getElementById('stats-all-rounds-tbody');
+            tbody.innerHTML = '';
+            rounds.forEach((r, idx) => {
+                const rMap = appState.votesByRound[idx] || {};
+                const rCounts = [0, 0, 0, 0];
+                Object.values(rMap).forEach(cIdx => {
+                    if (typeof cIdx === 'number' && rCounts[cIdx] !== undefined) rCounts[cIdx]++;
+                });
+                const rTotal = rCounts.reduce((a, b) => a + b, 0);
+                const rMax = Math.max(...rCounts);
+
+                let leaderText = '<span class="text-slate-400 italic">Noch keine Stimmen</span>';
+                if (rTotal > 0 && rMax > 0) {
+                    const topOpts = [];
+                    rCounts.forEach((c, oIdx) => {
+                        if (c === rMax) {
+                            const l = r.options[oIdx]?.label || defaultLabels[oIdx];
+                            topOpts.push(`${l}: ${r.options[oIdx]?.title}`);
+                        }
+                    });
+                    const topPct = Math.round((rMax / rTotal) * 100);
+                    leaderText = `<span class="font-semibold text-blue-600 dark:text-blue-400">${topOpts.join(', ')}</span> <span class="text-xs text-slate-500">(${rMax} St. / ${topPct}%)</span>`;
+                }
+
+                const distHtml = rCounts.map((c, oIdx) => {
+                    const l = r.options[oIdx]?.label || defaultLabels[oIdx];
+                    const p = rTotal > 0 ? Math.round((c / rTotal) * 100) : 0;
+                    const highlight = rTotal > 0 && c === rMax && c > 0 ? 'font-bold text-slate-900 dark:text-white bg-blue-50 dark:bg-blue-950/50 border-blue-300 dark:border-blue-800' : 'text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800';
+                    return `<span class="inline-block px-2 py-0.5 rounded border text-[11px] font-mono mr-1 mb-1 ${highlight}" title="${r.options[oIdx]?.title}">${l}: ${c} (${p}%)</span>`;
+                }).join('');
+
+                const tr = document.createElement('tr');
+                tr.className = idx === rIdx ? 'bg-blue-50/30 dark:bg-blue-950/15' : '';
+                tr.innerHTML = `
+                    <td class="py-2.5 pr-3">
+                        <button onclick="selectRound(${idx})" class="text-left hover:underline font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            ${idx === rIdx ? '<span class="w-2 h-2 rounded-full bg-blue-600 inline-block"></span>' : ''}
+                            <span>${r.shortTab}: ${r.question}</span>
+                        </button>
+                    </td>
+                    <td class="py-2.5 px-3 text-center font-mono font-bold text-slate-800 dark:text-slate-200">${rTotal}</td>
+                    <td class="py-2.5 px-3">${leaderText}</td>
+                    <td class="py-2.5 pl-3">${distHtml}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function toggleStatsPanel() {
+            if (!isTeacherMode) return;
+            isTeacherStatsOpen = !isTeacherStatsOpen;
+            renderTeacherStats();
+        }
+
+        function copyStatsReport() {
+            const rounds = getAllRounds();
+            const defaultLabels = ['A', 'B', 'C', 'D'];
+            const lines = [`📊 VIER ECKEN – ERGEBNISÜBERSICHT (Raum: ${currentRoomCode})\n`];
+
+            rounds.forEach((r, idx) => {
+                const rMap = appState.votesByRound[idx] || {};
+                const votersPerOpt = [[], [], [], []];
+                let counter = 1;
+                Object.entries(rMap).forEach(([vId, cIdx]) => {
+                    if (typeof cIdx === 'number' && votersPerOpt[cIdx]) {
+                        votersPerOpt[cIdx].push(getVoterDisplayName(vId, counter++));
+                    }
+                });
+                const total = votersPerOpt.reduce((acc, arr) => acc + arr.length, 0);
+                lines.push(`${idx + 1}. ${r.question} (Gesamt: ${total} Stimmen)`);
+                r.options.forEach((opt, oIdx) => {
+                    const count = votersPerOpt[oIdx].length;
+                    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                    const l = opt.label || defaultLabels[oIdx];
+                    const namesStr = count > 0 ? ` [${votersPerOpt[oIdx].join(', ')}]` : '';
+                    lines.push(`   ${l}) ${opt.title}: ${count} (${pct}%)${namesStr}`);
+                });
+                lines.push('');
+            });
+
+            const textarea = document.createElement('textarea');
+            textarea.value = lines.join('\n');
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showToast('📋 Ergebnis-Bericht in die Zwischenablage kopiert!');
+            } catch (e) {}
+            document.body.removeChild(textarea);
+        }
+
+        // =====================================================
+        // 6. ROUND NAVIGATION & TEACHER CONTROLS (PASSWORD PROTECTED)
+        // =====================================================
+        function getExpectedTeacherPassword() {
+            try {
+                return localStorage.getItem(TEACHER_PW_STORAGE_KEY) || DEFAULT_TEACHER_PASSWORD;
+            } catch (e) {
+                return DEFAULT_TEACHER_PASSWORD;
+            }
+        }
+
+        function selectRound(index) {
+            appState.activeRoundIndex = index;
+            renderAll();
+
+            const syncForAll = document.getElementById('sync-round-checkbox')?.checked;
+            if (isTeacherMode && syncForAll) {
+                publishAction({
+                    type: 'CHANGE_ROUND',
+                    roundIdx: index
+                }, true);
+            }
+        }
+
+        function prevRound() {
+            const total = getAllRounds().length;
+            const nextIdx = (appState.activeRoundIndex - 1 + total) % total;
+            selectRound(nextIdx);
+        }
+
+        function nextRound() {
+            const total = getAllRounds().length;
+            const nextIdx = (appState.activeRoundIndex + 1) % total;
+            selectRound(nextIdx);
+        }
+
+        function applyTeacherModeUI(unlocked) {
+            isTeacherMode = unlocked;
+            const toolbar = document.getElementById('teacher-toolbar');
+            const btn = document.getElementById('teacher-mode-btn');
+            const icon = document.getElementById('teacher-mode-icon');
+            const label = document.getElementById('teacher-mode-label');
+
+            if (isTeacherMode) {
+                toolbar.classList.remove('hidden');
+                btn.className = "px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-semibold text-xs sm:text-sm flex items-center gap-1.5 transition";
+                icon.textContent = '🔓';
+                label.textContent = 'Kursleitung (Aktiv)';
+            } else {
+                toolbar.classList.add('hidden');
+                btn.className = "px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs sm:text-sm flex items-center gap-1.5 border border-slate-200 dark:border-slate-700 transition";
+                icon.textContent = '🔒';
+                label.textContent = 'Kursleitung';
+                // Turn off multi-vote demo mode if teacher locks the toolbar
+                if (isMultiVoteDemo) {
+                    isMultiVoteDemo = false;
+                    const cb = document.getElementById('multi-vote-checkbox');
+                    if (cb) cb.checked = false;
+                    renderAll();
+                }
+            }
+            renderTeacherStats();
+        }
+
+        function toggleTeacherMode() {
+            if (isTeacherMode) {
+                // Lock teacher mode immediately when clicked while active
+                try { sessionStorage.removeItem(TEACHER_SESSION_UNLOCK_KEY); } catch (e) {}
+                applyTeacherModeUI(false);
+                showToast('🔒 Kursleitungs-Modus gesperrt');
+            } else {
+                openPasswordModal();
+            }
+        }
+
+        function openPasswordModal() {
+            const modal = document.getElementById('password-modal');
+            const input = document.getElementById('teacher-password-input');
+            const err = document.getElementById('password-error-msg');
+            input.value = '';
+            input.type = 'password';
+            err.classList.add('hidden');
+            modal.classList.remove('hidden');
+            setTimeout(() => input.focus(), 50);
+        }
+
+        function closePasswordModal() {
+            document.getElementById('password-modal').classList.add('hidden');
+        }
+
+        function togglePasswordVisibility(inputId) {
+            const input = document.getElementById(inputId);
+            if (!input) return;
+            input.type = input.type === 'password' ? 'text' : 'password';
+            input.focus();
+        }
+
+        function submitTeacherPassword(event) {
+            event.preventDefault();
+            const input = document.getElementById('teacher-password-input');
+            const entered = input.value.trim();
+            const expected = getExpectedTeacherPassword();
+
+            if (entered.toLowerCase() === expected.toLowerCase()) {
+                try { sessionStorage.setItem(TEACHER_SESSION_UNLOCK_KEY, '1'); } catch (e) {}
+                closePasswordModal();
+                applyTeacherModeUI(true);
+                showToast('🔓 Kursleitungs-Modus freigeschaltet!');
+            } else {
+                const err = document.getElementById('password-error-msg');
+                const card = document.getElementById('password-modal-card');
+                err.classList.remove('hidden');
+                card.classList.remove('shake-anim');
+                void card.offsetWidth; // trigger reflow for animation
+                card.classList.add('shake-anim');
+                input.select();
+            }
+        }
+
+        function openChangePasswordModal() {
+            if (!isTeacherMode) return;
+            const input = document.getElementById('new-teacher-password-input');
+            input.value = getExpectedTeacherPassword();
+            document.getElementById('change-password-modal').classList.remove('hidden');
+            setTimeout(() => input.focus(), 50);
+        }
+
+        function closeChangePasswordModal() {
+            document.getElementById('change-password-modal').classList.add('hidden');
+        }
+
+        function saveNewTeacherPassword(event) {
+            event.preventDefault();
+            if (!isTeacherMode) return;
+            const newPw = document.getElementById('new-teacher-password-input').value.trim();
+            if (!newPw) return;
+            try {
+                localStorage.setItem(TEACHER_PW_STORAGE_KEY, newPw);
+            } catch (e) {}
+            closeChangePasswordModal();
+            showToast('🔑 Neues Kursleitungs-Passwort gespeichert!');
+        }
+
+        function resetTeacherPasswordToDefault() {
+            if (!isTeacherMode) return;
+            try {
+                localStorage.removeItem(TEACHER_PW_STORAGE_KEY);
+            } catch (e) {}
+            document.getElementById('new-teacher-password-input').value = DEFAULT_TEACHER_PASSWORD;
+            closeChangePasswordModal();
+            showToast('Passwort auf Standard („b12“) zurückgesetzt');
+        }
+
+        function toggleMultiVoteMode() {
+            if (!isTeacherMode) return;
+            isMultiVoteDemo = document.getElementById('multi-vote-checkbox').checked;
+            renderAll();
+            showToast(isMultiVoteDemo ? 'Demo-Modus: Mehrfach-Klicks aktiviert' : 'Standard-Modus: 1 Stimme pro Person');
+        }
+
+        function resetCurrentVotes() {
+            if (!isTeacherMode) return;
+            const rIdx = appState.activeRoundIndex;
+            appState.votesByRound[rIdx] = {};
+            renderAll();
+            publishAction({
+                type: 'RESET_ROUND',
+                roundIdx: rIdx
+            }, true);
+            showToast('Stimmen dieser Runde auf 0 gesetzt');
+        }
+
+        function resetAllRoundsVotes() {
+            if (!isTeacherMode) return;
+            const rounds = getAllRounds();
+            appState.votesByRound = {};
+            rounds.forEach((_, idx) => { appState.votesByRound[idx] = {}; });
+            renderAll();
+            publishAction({
+                type: 'RESET_ALL'
+            }, true);
+            showToast('Alle Runden wurden zurückgesetzt');
+        }
+
+        function toggleImpulseDrawer() {
+            impulseDrawerOpen = !impulseDrawerOpen;
+            const content = document.getElementById('impulse-drawer-content');
+            const label = document.getElementById('drawer-toggle-label');
+            if (impulseDrawerOpen) {
+                content.classList.remove('hidden');
+                label.textContent = 'Ausblenden ▲';
+            } else {
+                content.classList.add('hidden');
+                label.textContent = 'Einblenden ▼';
+            }
+        }
+
+        // =====================================================
+        // 7. SHARE LINK, QR CODE & ROOM MODAL
+        // =====================================================
+        function getShareableRoomUrl() {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', currentRoomCode);
+            return url.toString();
+        }
+
+        function openShareModal() {
+            const shareUrl = getShareableRoomUrl();
+            document.getElementById('share-room-label').textContent = currentRoomCode;
+            document.getElementById('share-url-input').value = shareUrl;
+            const qrImg = document.getElementById('qr-code-img');
+            qrImg.style.display = 'block';
+            qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=${encodeURIComponent(shareUrl)}`;
+            document.getElementById('share-modal').classList.remove('hidden');
+        }
+
+        function closeShareModal() {
+            document.getElementById('share-modal').classList.add('hidden');
+        }
+
+        function copyShareUrl() {
+            const input = document.getElementById('share-url-input');
+            input.select();
+            try {
+                document.execCommand('copy');
+                const btn = document.getElementById('copy-url-btn');
+                btn.textContent = '✅ Kopiert!';
+                setTimeout(() => { btn.textContent = '📋 Kopieren'; }, 2000);
+                showToast('Teilnahme-Link in die Zwischenablage kopiert!');
+            } catch (e) {}
+        }
+
+        function openRoomModal() {
+            document.getElementById('room-code-input').value = currentRoomCode;
+            document.getElementById('room-modal').classList.remove('hidden');
+            document.getElementById('room-code-input').focus();
+        }
+
+        function closeRoomModal() {
+            document.getElementById('room-modal').classList.add('hidden');
+        }
+
+        function applyNewRoomCode() {
+            const raw = document.getElementById('room-code-input').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+            if (!raw) return;
+            currentRoomCode = raw;
+
+            // Update URL parameter without reloading
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('room', currentRoomCode);
+                window.history.replaceState({}, '', url.toString());
+            } catch (e) {}
+
+            closeRoomModal();
+            initRealTimeSync();
+            showToast(`Verbunden mit Raum: ${currentRoomCode}`);
+        }
+
+        // =====================================================
+        // 8. CUSTOM QUESTION CREATOR (LIVE SYNCED)
+        // =====================================================
+        function openCustomModal() {
+            if (!isTeacherMode) {
+                openPasswordModal();
+                return;
+            }
+            document.getElementById('custom-modal').classList.remove('hidden');
+            document.getElementById('custom-q-title').focus();
+        }
+
+        function closeCustomModal() {
+            document.getElementById('custom-modal').classList.add('hidden');
+        }
+
+        function saveCustomRound() {
+            if (!isTeacherMode) return;
+            const qTitle = document.getElementById('custom-q-title').value.trim();
+            if (!qTitle) {
+                document.getElementById('custom-q-title').focus();
+                return;
+            }
+
+            const t1 = document.getElementById('custom-opt1-title').value.trim() || "Option 1";
+            const d1 = document.getElementById('custom-opt1-desc').value.trim() || "Ich wähle Ecke 1!";
+
+            const t2 = document.getElementById('custom-opt2-title').value.trim() || "Option 2";
+            const d2 = document.getElementById('custom-opt2-desc').value.trim() || "Ich wähle Ecke 2!";
+
+            const t3 = document.getElementById('custom-opt3-title').value.trim() || "Option 3";
+            const d3 = document.getElementById('custom-opt3-desc').value.trim() || "Ich wähle Ecke 3!";
+
+            const t4 = document.getElementById('custom-opt4-title').value.trim() || "Option 4";
+            const d4 = document.getElementById('custom-opt4-desc').value.trim() || "Ich wähle Ecke 4!";
+
+            const customFollowup = document.getElementById('custom-q-followup').value.trim() || "Warum hast du dich für diese Karte entschieden? Erzähl kurz!";
+
+            const newRoundNum = getAllRounds().length + 1;
+            const newRoundObj = {
+                id: 'custom_' + Date.now(),
+                shortTab: `${newRoundNum}. Eigene Frage`,
+                category: "LIVE-FRAGE",
+                question: qTitle,
+                followups: [
+                    `• ${customFollowup}`,
+                    "• Wer hat dieselbe Option gewählt – und wer sieht das anders?"
+                ],
+                options: [
+                    { label: "A", title: t1, desc: d1 },
+                    { label: "B", title: t2, desc: d2 },
+                    { label: "C", title: t3, desc: d3 },
+                    { label: "D", title: t4, desc: d4 }
+                ]
+            };
+
+            appState.customRounds.push(newRoundObj);
+            const newIdx = getAllRounds().length - 1;
+            appState.votesByRound[newIdx] = {};
+            appState.activeRoundIndex = newIdx;
+
+            ['custom-q-title', 'custom-opt1-title', 'custom-opt1-desc', 'custom-opt2-title', 'custom-opt2-desc', 'custom-opt3-title', 'custom-opt3-desc', 'custom-opt4-title', 'custom-opt4-desc', 'custom-q-followup'].forEach(id => {
+                document.getElementById(id).value = '';
+            });
+
+            closeCustomModal();
+            renderAll();
+
+            publishAction({
+                type: 'ADD_CUSTOM_ROUND',
+                round: newRoundObj
+            }, true);
+            showToast('Eigene Frage live für alle Teilnehmenden gestartet!');
+        }
+
+        // =====================================================
+        // 9. QUICK TIMER & UTILITIES
+        // =====================================================
+        let timerDuration = 30;
+        let timerRemaining = 30;
+        let timerInterval = null;
+        let timerRunning = false;
+
+        function formatSeconds(sec) {
+            const m = Math.floor(sec / 60);
+            const s = sec % 60;
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+
+        function updateTimerDisplay() {
+            document.getElementById('timer-display').textContent = formatSeconds(timerRemaining);
+            document.getElementById('preset-30').className = timerDuration === 30
+                ? "px-1.5 py-0.5 rounded text-xs font-bold transition bg-blue-600 text-white"
+                : "px-1.5 py-0.5 rounded text-xs font-medium transition text-slate-600 dark:text-slate-400";
+            document.getElementById('preset-60').className = timerDuration === 60
+                ? "px-1.5 py-0.5 rounded text-xs font-bold transition bg-blue-600 text-white"
+                : "px-1.5 py-0.5 rounded text-xs font-medium transition text-slate-600 dark:text-slate-400";
+        }
+
+        function setTimer(seconds) {
+            stopTimer();
+            timerDuration = seconds;
+            timerRemaining = seconds;
+            document.getElementById('timer-box').classList.remove('timer-alert');
+            document.getElementById('timer-icon').textContent = '⏱️';
+            updateTimerDisplay();
+        }
+
+        function toggleTimer() {
+            if (timerRunning) {
+                stopTimer();
+            } else {
+                if (timerRemaining <= 0) timerRemaining = timerDuration;
+                timerRunning = true;
+                const btn = document.getElementById('timer-toggle-btn');
+                btn.textContent = 'Pause';
+                document.getElementById('timer-box').classList.remove('timer-alert');
+
+                timerInterval = setInterval(() => {
+                    if (timerRemaining > 0) {
+                        timerRemaining--;
+                        updateTimerDisplay();
+                    } else {
+                        stopTimer();
+                        document.getElementById('timer-icon').textContent = '🔔';
+                        document.getElementById('timer-box').classList.add('timer-alert');
+                        playChime();
+                    }
+                }, 1000);
+            }
+        }
+
+        function stopTimer() {
+            timerRunning = false;
+            clearInterval(timerInterval);
+            const btn = document.getElementById('timer-toggle-btn');
+            btn.textContent = 'Start';
+        }
+
+        function resetTimer() {
+            stopTimer();
+            timerRemaining = timerDuration;
+            document.getElementById('timer-icon').textContent = '⏱️';
+            document.getElementById('timer-box').classList.remove('timer-alert');
+            updateTimerDisplay();
+        }
+
+        function playChime() {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                const ctx = new AudioCtx();
+                [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.12);
+                    gain.gain.setValueAtTime(0.001, ctx.currentTime + i * 0.12);
+                    gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + i * 0.12 + 0.03);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.12 + 0.9);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(ctx.currentTime + i * 0.12);
+                    osc.stop(ctx.currentTime + i * 0.12 + 0.95);
+                });
+            } catch (e) {}
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-text').textContent = message;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 2800);
+        }
+
+        function toggleTheme() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            document.getElementById('theme-icon').textContent = isDark ? '☀️' : '🌙';
+        }
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        // Keyboard shortcuts: Left/Right arrows for rounds, 1-4 to cast vote
+        window.addEventListener('keydown', (e) => {
+            const inInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+            const modalOpen = !document.getElementById('custom-modal').classList.contains('hidden') ||
+                              !document.getElementById('room-modal').classList.contains('hidden') ||
+                              !document.getElementById('share-modal').classList.contains('hidden') ||
+                              !document.getElementById('password-modal').classList.contains('hidden') ||
+                              !document.getElementById('change-password-modal').classList.contains('hidden');
+            if (inInput && e.key !== 'Escape') return;
+
+            if (e.key === 'Escape' && modalOpen) {
+                closeCustomModal();
+                closeRoomModal();
+                closeShareModal();
+                closePasswordModal();
+                closeChangePasswordModal();
+                return;
+            }
+
+            if (modalOpen) return;
+
+            if (e.key === 'ArrowRight') nextRound();
+            if (e.key === 'ArrowLeft') prevRound();
+            if (['1', '2', '3', '4'].includes(e.key)) {
+                castVote(parseInt(e.key, 10) - 1);
+            }
+        });
+
+        window.onload = function () {
+            // Start in clean light mode by default for maximum clarity, or keep dark if user toggles
+            document.documentElement.classList.remove('dark');
+            document.getElementById('theme-icon').textContent = '🌙';
+
+            // Pre-fill saved voter name if present
+            const nameInput = document.getElementById('voter-name-input');
+            if (nameInput && myVoterName) {
+                nameInput.value = myVoterName;
+            }
+
+            renderAll();
+            updateTimerDisplay();
+            initRealTimeSync();
+
+            // Restore unlocked Teacher Mode if already authenticated in this browser tab session
+            try {
+                if (sessionStorage.getItem(TEACHER_SESSION_UNLOCK_KEY) === '1') {
+                    applyTeacherModeUI(true);
+                }
+            } catch (e) {}
+        };
+    </script>
+</body>
+</html>
